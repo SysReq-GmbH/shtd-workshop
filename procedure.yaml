@@ -1,0 +1,287 @@
+# =============================================================================
+# SIB-200 functional test
+# =============================================================================
+#
+# WHAT WE TEST
+# The SIB-200 is the example board of this workshop: a small electronic board
+# that is powered with 24 V and has three parts we want to check:
+#   - a voltage regulator, which turns the 24 V into the 3.3 V the chips need
+#   - a microcontroller (a small processor), which needs its firmware loaded
+#   - a temperature sensor, which the microcontroller reads
+#
+# At the end of production, every board goes through this test. First the
+# operator places the board in the fixture, then 5 steps run on their own:
+#   0. Place the board  A picture shows how. The operator answers "Yes".
+#   1. Power on         Apply 24 V. Does the board draw a normal current?
+#   2. 3.3 V rail       Is the regulator output really 3.3 V?
+#   3. Flash firmware   Load the firmware. Is the right version on the board?
+#   4. Read sensor      Does the sensor give a sensible temperature?
+#   5. Temperature log  Record the temperature for 2 seconds. Is it stable?
+#   6. LED check        The operator looks at the LED: green or red?
+#   (5 and 6 are switched off for now: see STEP 5 and STEP 6 at the end)
+#
+# No real board or instrument is needed: everything is simulated.
+#
+# HOW THE TEST IS BUILT
+# This file describes the test: the board, the instruments, the steps, the
+# limits and what the operator sees. It contains no code. The rest is in:
+#   plugs/bench.py     the instruments (power supply, multimeter...)
+#   phases/sib200.py   the 5 steps, one Python function each
+#   images/            the pictures shown to the operator
+#
+# HOW TO RUN IT
+# Open a terminal in this folder, then:
+#   tofupilot run .                         run on your computer only
+#   tofupilot run . --upload --ui browser   open the operator screen in your
+#                                           browser and send the result to
+#                                           the TofuPilot dashboard
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# GENERAL INFORMATION
+# The name of the test, as it appears in the TofuPilot dashboard.
+# -----------------------------------------------------------------------------
+name: SIB-200 functional test
+version: 1.0.0
+description: >-
+  End-of-line functional test of the SIB-200 board: power, 3.3 V supply,
+  firmware and temperature sensor.
+
+
+# -----------------------------------------------------------------------------
+# THE BOARD UNDER TEST
+# Every board has a serial number, so we know which board passed or failed.
+# Before the test starts, the operator screen asks for it.
+# The "description" lines below are what the operator reads on screen.
+#
+# For the workshop: any serial number works. The boards are simulated, and
+# about one board in ten fails on the 3.3 V rail, so you will see a FAIL.
+# -----------------------------------------------------------------------------
+unit:
+  serial_number:
+    default_value: SN-0251                  # pre-filled, the operator can change it
+    description: Scan the barcode on the board, or type the serial number from its label.
+  part_number:
+    default_value: SIB-200                  # the product reference
+
+
+# -----------------------------------------------------------------------------
+# THE OPERATOR
+# The person who runs the test. The operator screen asks for their name, and
+# the result is saved with it.
+# -----------------------------------------------------------------------------
+operated_by:
+  description: Enter your name. It is recorded with the test result.
+  placeholder: Thomas                       # example shown in the empty field
+  min_length: 2                             # at least 2 letters
+
+
+# -----------------------------------------------------------------------------
+# THE INSTRUMENTS
+# The equipment on the test bench. In TofuPilot, an instrument is called a
+# "plug". Each one is written in plugs/bench.py.
+#   name:    the short name the steps use to ask for this instrument
+#   python:  where its code is: file plugs/bench.py, then the name inside it
+# -----------------------------------------------------------------------------
+plugs:
+  - name: psu                               # power supply: gives the 24 V
+    python: plugs.bench:PowerSupply
+  - name: dmm                               # multimeter: measures the 3.3 V
+    python: plugs.bench:DMM
+  - name: programmer                        # loads the firmware into the board
+    python: plugs.bench:Programmer
+  - name: sensor                            # reads the board's temperature sensor
+    python: plugs.bench:I2CSensor
+
+
+# -----------------------------------------------------------------------------
+# THE TEST STEPS
+# In TofuPilot, a step is called a "phase". They run from top to bottom.
+#
+# Each phase has:
+#   key            a short unique id
+#   name           the name the operator sees on screen
+#   description    the sentence the operator sees under that name
+#   python         the function that runs: file phases/sib200.py, then its name
+#   measurements   the values this phase measures
+#   validators     the limits of each value. Inside the limits: PASS.
+#                  Outside: FAIL.
+#   depends_on     this phase runs only after the phase listed here, and
+#                  only if it passed. Without it, phases run in parallel.
+#   ui             what the operator sees during this phase: pictures,
+#                  questions, a progress bar... (optional)
+#
+# The Python code only measures. The limits written here decide PASS or FAIL,
+# so you can change a limit without touching the code.
+# -----------------------------------------------------------------------------
+main:
+
+  # Before the test: the operator places the board in the fixture.
+  # The screen shows a picture of the board and asks one question. The test
+  # waits until the operator answers "Yes". No Python code: only a screen.
+  - key: place_board
+    name: Place the board
+    description: Put the board in the fixture as shown, then confirm.
+    ui:
+      components:                           # shown top to bottom
+        - key: pcb_picture
+          type: image                       # a picture from this folder
+          default_value: images/pcb.png
+        - key: board_in_fixture
+          type: radio                       # a choice the operator must make
+          label: Is the board in the fixture, clamp closed?
+          options:
+            - value: "yes"
+              label: "Yes"
+          required: true                    # the test waits for this answer
+
+  # Step 1: apply 24 V, measure the current the board draws.
+  # A good board draws about 62 mA. More than 80 mA means a problem.
+  - key: power_on
+    name: Power on
+    python: phases.sib200:power_on
+    description: The board is powered at 24 V and its current is measured.
+    measurements:
+      - key: idle_current
+        name: idle_current
+        unit: mA
+        validators:
+          - operator: "<="                  # PASS if 80 mA or less
+            expected_value: 80
+    depends_on:
+      - place_board                         # wait for the operator's "Yes"
+
+  # Step 2: measure the regulator output with the multimeter.
+  # It must be between 3.2 V and 3.4 V.
+  - key: rail_3v3
+    name: 3.3 V rail
+    python: phases.sib200:rail_3v3
+    description: The 3.3 V supply of the board is measured.
+    measurements:
+      - key: rail_3v3
+        name: rail_3v3
+        unit: V
+        validators:
+          - operator: ">="                  # at least 3.2 V
+            expected_value: 3.2
+          - operator: "<="                  # and at most 3.4 V
+            expected_value: 3.4
+    depends_on:
+      - power_on
+
+  # Step 3: load the firmware, then read back its version.
+  # The value is text, not a number: it must be exactly "2.1.0".
+  - key: flash_firmware
+    name: Flash firmware
+    python: phases.sib200:flash_firmware
+    description: The firmware is loaded into the board and its version is checked.
+    measurements:
+      - key: firmware_version
+        name: firmware_version
+        validators:
+          - operator: "=="                  # must be exactly equal
+            expected_value: "2.1.0"
+    depends_on:
+      - rail_3v3
+
+  # Step 4: read the temperature sensor.
+  # We only check that the value makes sense for a room: 15 to 35 °C.
+  - key: read_sensor
+    name: Read sensor
+    python: phases.sib200:read_sensor
+    description: The temperature sensor of the board is read and checked.
+    measurements:
+      - key: temp_c
+        name: temp_c
+        unit: "°C"
+        validators:
+          - operator: ">="                  # at least 15 °C
+            expected_value: 15
+          - operator: "<="                  # and at most 35 °C
+            expected_value: 35
+    depends_on:
+      - flash_firmware
+
+  # ---------------------------------------------------------------------------
+  # STEP 5: TEMPERATURE LOG (switched off: this is step 3 of the workshop)
+  # Record the temperature for 2 seconds, 100 readings.
+  # The result is a curve: time on the x axis, temperature on the y axis.
+  # A limit cannot apply to 100 points at once, so we check two numbers
+  # computed from them (called "aggregations"): the lowest and the highest.
+  # A progress bar shows the operator how far the recording is.
+  # The Python is already written: phases/sib200.py, temperature_log.
+  #
+  # To switch the phase on, remove the "# " in front of every line of the
+  # block below, from "- key: temperature_log" down to "- read_sensor".
+  # Keep the spaces. In VS Code: select the lines, then Ctrl+/ (macOS Cmd+/).
+  # ---------------------------------------------------------------------------
+  # - key: temperature_log
+  #   name: Temperature log
+  #   python: phases.sib200:temperature_log
+  #   description: The board temperature is recorded for 2 seconds.
+  #   ui:
+  #     components:
+  #       - key: progress
+  #         type: progress                    # a bar, filled by the Python code
+  #         label: Recording
+  #         min: 0
+  #         max: 100
+  #   measurements:
+  #     - key: temperature_log
+  #       name: Temperature log
+  #       x_axis:                             # horizontal axis: time
+  #         key: time
+  #         unit: s
+  #       y_axis:                             # vertical axis: temperature
+  #         - key: temperature
+  #           unit: "°C"
+  #           aggregations:
+  #             - type: min                   # the lowest reading: at least 15 °C
+  #               validators:
+  #                 - operator: ">="
+  #                   expected_value: 15
+  #             - type: max                   # the highest reading: at most 35 °C
+  #               validators:
+  #                 - operator: "<="
+  #                   expected_value: 35
+  #   depends_on:
+  #     - read_sensor
+
+
+  # ---------------------------------------------------------------------------
+  # STEP 6: LED CHECK (switched off: this is step 4 of the workshop)
+  # Ask the operator a question: which colour is the LED?
+  # No Python: the screen shows two pictures, the operator clicks one, then
+  # Continue. The answer is stored as a measurement (bind) and judged by the
+  # limit, like any other value: green is PASS, red is FAIL.
+  #
+  # Same move as STEP 5: remove the "# " in front of every line of the block
+  # below, from "- key: led_check" down to "- temperature_log". It needs
+  # STEP 5 switched on first (depends_on).
+  # ---------------------------------------------------------------------------
+  # - key: led_check
+  #   name: LED check
+  #   description: Look at the LED next to the connector. Which colour is it?
+  #   ui:
+  #     components:
+  #       - key: led_color
+  #         type: radio                       # one choice, shown as image cards
+  #         label: Which colour is the LED?
+  #         options:
+  #           - label: Green
+  #             value: green
+  #             image: images/led-green.png   # relative to this folder
+  #           - label: Red
+  #             value: red
+  #             image: images/led-red.png
+  #         required: true                    # Continue waits for a choice
+  #         bind: measurements.led_color      # the choice becomes this measurement
+  #   measurements:
+  #     - key: led_color
+  #       name: led_color
+  #       validators:
+  #         - operator: "=="                  # green is the only PASS
+  #           expected_value: green
+  #   depends_on:
+  #     - temperature_log

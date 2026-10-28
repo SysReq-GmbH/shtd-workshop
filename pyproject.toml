@@ -1,0 +1,6 @@
+[project]
+name = "sib200-functional-test"
+version = "1.0.0"
+description = "SIB-200 functional test, TofuPilot Framework, Swiss Hardware Testing Day 2026 workshop"
+requires-python = ">=3.10"
+dependencies = []
